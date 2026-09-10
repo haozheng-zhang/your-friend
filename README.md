@@ -26,8 +26,8 @@
 
 ## 下载与运行
 
-1. 普通用户下载 [`dist/YourFriend_Setup_1.1.0.exe`](dist/YourFriend_Setup_1.1.0.exe)；喜欢便携版可下载 [`dist/DesktopFly_5min.exe`](dist/DesktopFly_5min.exe)。
-2. 安装包和便携版都无需管理员权限。
+1. 下载 [`DesktopFly_5min.exe`](https://github.com/haozheng-zhang/your-friend/releases/latest/download/DesktopFly_5min.exe)。
+2. 双击即可运行，无需安装，无需管理员权限。
 3. Windows 首次运行时可能提示“未知发布者”。这是因为项目没有购买代码签名证书，可选择“更多信息 → 仍要运行”。
 4. 五分钟后程序自动结束。
 
@@ -82,24 +82,12 @@ bash scripts/build-mingw-linux.sh
 
 生成文件位于 `dist/DesktopFly_5min.exe`。
 
-### 生成安装包
-
-安装 [Inno Setup 6](https://jrsoftware.org/isinfo.php) 后，运行：
-
-```powershell
-iscc installer/YourFriend.iss
-```
-
-生成文件位于 `dist/YourFriend_Setup_1.1.0.exe`。
-
 ## 项目结构
 
 ```text
 your-friend/
 ├─ assets/                     # 飞行与搓前腿透明素材
-├─ dist/DesktopFly_5min.exe    # Windows 免安装运行包
-├─ dist/YourFriend_Setup_1.1.0.exe # Windows 安装包
-├─ installer/                  # Inno Setup 安装包脚本
+├─ dist/DesktopFly_5min.exe    # Windows 单文件可执行程序
 ├─ scripts/                    # 交叉编译脚本
 ├─ src/                        # Win32 / GDI+ 源码与资源定义
 ├─ CMakeLists.txt
