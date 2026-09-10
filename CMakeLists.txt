@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(YourFriend VERSION 1.1.1 LANGUAGES CXX RC)
+project(YourFriend VERSION 1.2.0 LANGUAGES CXX RC)
 
 add_executable(DesktopFly WIN32
     src/main.cpp

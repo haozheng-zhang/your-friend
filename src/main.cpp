@@ -57,6 +57,8 @@ HDC g_screenDc = nullptr;
 HDC g_memoryDc = nullptr;
 std::vector<Frame> g_flightFrames;
 std::vector<Frame> g_groomFrames;
+std::vector<Frame> g_flightFlutterFrames;
+std::vector<Frame> g_groomFlutterFrames;
 Bitmap* g_currentBitmap = nullptr;
 
 std::mt19937 g_random;
@@ -78,6 +80,9 @@ ULONGLONG g_nextTurn = 0;
 ULONGLONG g_nextSpeedChange = 0;
 ULONGLONG g_nextMotionChange = 0;
 ULONGLONG g_boostUntil = 0;
+ULONGLONG g_nextGroomChange = 0;
+ULONGLONG g_nextWingFlick = 0;
+ULONGLONG g_wingFlickUntil = 0;
 double g_targetSpeed = 0.0;
 
 enum class MotionMode {
@@ -176,19 +181,90 @@ Frame MakeRotatedFrame(Bitmap* source, double degrees) {
     return frame;
 }
 
+void DrawWingGhost(Graphics& target, Bitmap* source, bool leftWing) {
+    Bitmap layer(g_pixelSize, g_pixelSize, PixelFormat32bppPARGB);
+    Graphics layerGraphics(&layer);
+    layerGraphics.SetCompositingMode(CompositingModeSourceCopy);
+    layerGraphics.Clear(Color(0, 0, 0, 0));
+    layerGraphics.SetCompositingMode(CompositingModeSourceOver);
+    layerGraphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+
+    const auto point = [](double x, double y) {
+        return PointF(static_cast<REAL>(x * g_pixelSize), static_cast<REAL>(y * g_pixelSize));
+    };
+    PointF wingPoints[6];
+    const double normalizedX[6] = {0.46, 0.34, 0.25, 0.29, 0.41, 0.47};
+    const double normalizedY[6] = {0.41, 0.45, 0.63, 0.78, 0.66, 0.45};
+    for (int index = 0; index < 6; ++index) {
+        const double x = leftWing ? normalizedX[index] : 1.0 - normalizedX[index];
+        wingPoints[index] = point(x, normalizedY[index]);
+    }
+
+    GraphicsPath wingPath;
+    wingPath.AddPolygon(wingPoints, 6);
+    layerGraphics.SetClip(&wingPath);
+    layerGraphics.DrawImage(source, Rect(0, 0, g_pixelSize, g_pixelSize),
+                            0, 0, source->GetWidth(), source->GetHeight(), UnitPixel);
+
+    ColorMatrix alphaMatrix = {{
+        {1.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+        {0.0f, 0.0f, 0.0f, 0.52f, 0.0f},
+        {0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+    }};
+    ImageAttributes attributes;
+    attributes.SetColorMatrix(&alphaMatrix, ColorMatrixFlagsDefault, ColorAdjustTypeBitmap);
+
+    const REAL rootX = static_cast<REAL>((leftWing ? 0.45 : 0.55) * g_pixelSize);
+    const REAL rootY = static_cast<REAL>(0.42 * g_pixelSize);
+    const GraphicsState state = target.Save();
+    target.TranslateTransform(rootX, rootY);
+    target.RotateTransform(leftWing ? 7.0f : -7.0f);
+    target.TranslateTransform(-rootX, -rootY);
+    target.DrawImage(&layer, Rect(0, 0, g_pixelSize, g_pixelSize),
+                     0, 0, g_pixelSize, g_pixelSize, UnitPixel, &attributes);
+    target.Restore(state);
+}
+
+std::unique_ptr<Bitmap> MakeWingFlutterSource(Bitmap* source) {
+    auto composed = std::make_unique<Bitmap>(g_pixelSize, g_pixelSize, PixelFormat32bppPARGB);
+    Graphics graphics(composed.get());
+    graphics.SetCompositingMode(CompositingModeSourceCopy);
+    graphics.Clear(Color(0, 0, 0, 0));
+    graphics.SetCompositingMode(CompositingModeSourceOver);
+    graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+    graphics.DrawImage(source, Rect(0, 0, g_pixelSize, g_pixelSize),
+                       0, 0, source->GetWidth(), source->GetHeight(), UnitPixel);
+    DrawWingGhost(graphics, source, true);
+    DrawWingGhost(graphics, source, false);
+    graphics.Flush(FlushIntentionSync);
+    return composed;
+}
+
 bool BuildFrames() {
     auto flight = LoadPngResource(IDR_FLY_FLIGHT);
     auto groom = LoadPngResource(IDR_FLY_GROOM);
     if (!flight || !groom) return false;
+    auto flightFlutter = MakeWingFlutterSource(flight.get());
+    auto groomFlutter = MakeWingFlutterSource(groom.get());
+    if (!flightFlutter || !groomFlutter) return false;
     g_flightFrames.reserve(kFrameCount);
     g_groomFrames.reserve(kFrameCount);
+    g_flightFlutterFrames.reserve(kFrameCount);
+    g_groomFlutterFrames.reserve(kFrameCount);
     for (int index = 0; index < kFrameCount; ++index) {
         const double angle = 360.0 * index / kFrameCount;
         Frame flightFrame = MakeRotatedFrame(flight.get(), angle);
         Frame groomFrame = MakeRotatedFrame(groom.get(), angle);
-        if (!flightFrame.handle || !groomFrame.handle) return false;
+        Frame flightFlutterFrame = MakeRotatedFrame(flightFlutter.get(), angle);
+        Frame groomFlutterFrame = MakeRotatedFrame(groomFlutter.get(), angle);
+        if (!flightFrame.handle || !groomFrame.handle ||
+            !flightFlutterFrame.handle || !groomFlutterFrame.handle) return false;
         g_flightFrames.emplace_back(std::move(flightFrame));
         g_groomFrames.emplace_back(std::move(groomFrame));
+        g_flightFlutterFrames.emplace_back(std::move(flightFlutterFrame));
+        g_groomFlutterFrames.emplace_back(std::move(groomFlutterFrame));
     }
     return true;
 }
@@ -287,15 +363,31 @@ void Tick() {
 
         if (now >= g_nextStop) {
             g_flying = false;
-            g_grooming = RandomUnit() < 0.72;
+            g_grooming = true;
             g_stopUntil = now + RandomRestDuration();
             g_restFrame = HeadingFrame();
+            g_nextGroomChange = now + static_cast<ULONGLONG>(RandomRange(1200.0, 3200.0));
+            g_nextWingFlick = now + static_cast<ULONGLONG>(RandomRange(120.0, 650.0));
+            g_wingFlickUntil = 0;
         }
     } else {
-        const bool rubPose = g_grooming && ((now / 125) % 2 == 0);
-        const int flutterOffset = ((now / 32) % 2 == 0) ? -1 : 1;
-        const int flutterFrame = (g_restFrame + flutterOffset + kFrameCount) % kFrameCount;
-        Present(rubPose ? g_groomFrames[g_restFrame] : g_flightFrames[flutterFrame]);
+        if (now >= g_nextGroomChange) {
+            g_grooming = !g_grooming;
+            g_nextGroomChange = now + static_cast<ULONGLONG>(g_grooming
+                ? RandomRange(1100.0, 3400.0) : RandomRange(300.0, 1300.0));
+        }
+        if (now >= g_nextWingFlick) {
+            g_wingFlickUntil = now + static_cast<ULONGLONG>(RandomRange(140.0, 420.0));
+            g_nextWingFlick = g_wingFlickUntil + static_cast<ULONGLONG>(RandomRange(350.0, 1800.0));
+        }
+
+        const bool rubPose = g_grooming && ((now / 83) % 2 == 0);
+        const bool wingFlick = now < g_wingFlickUntil && ((now / 42) % 2 == 0);
+        if (rubPose) {
+            Present(wingFlick ? g_groomFlutterFrames[g_restFrame] : g_groomFrames[g_restFrame]);
+        } else {
+            Present(wingFlick ? g_flightFlutterFrames[g_restFrame] : g_flightFrames[g_restFrame]);
+        }
         if (now >= g_stopUntil) StartFlight(false);
     }
 }
@@ -363,6 +455,8 @@ void Cleanup() {
     g_currentBitmap = nullptr;
     g_flightFrames.clear();
     g_groomFrames.clear();
+    g_flightFlutterFrames.clear();
+    g_groomFlutterFrames.clear();
     if (g_memoryDc) { DeleteDC(g_memoryDc); g_memoryDc = nullptr; }
     if (g_screenDc) { ReleaseDC(nullptr, g_screenDc); g_screenDc = nullptr; }
     if (g_gdiplusToken) { GdiplusShutdown(g_gdiplusToken); g_gdiplusToken = 0; }
