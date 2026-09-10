@@ -293,7 +293,9 @@ void Tick() {
         }
     } else {
         const bool rubPose = g_grooming && ((now / 125) % 2 == 0);
-        Present(rubPose ? g_groomFrames[g_restFrame] : g_flightFrames[g_restFrame]);
+        const int flutterOffset = ((now / 32) % 2 == 0) ? -1 : 1;
+        const int flutterFrame = (g_restFrame + flutterOffset + kFrameCount) % kFrameCount;
+        Present(rubPose ? g_groomFrames[g_restFrame] : g_flightFrames[flutterFrame]);
         if (now >= g_stopUntil) StartFlight(false);
     }
 }
